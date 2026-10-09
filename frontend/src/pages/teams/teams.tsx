@@ -5,7 +5,7 @@ import { useAuthStore } from '../../stores/authStore';
 import { Button } from '../../components/ui/button';
 import type { User } from '../../types/auth';
 import api from '../../services/api';
-import { Loader2, Plus, Users, Shield, Trash2, ArrowRight } from 'lucide-react';
+import { Loader2, Plus, Users, Trash2, ArrowRight } from 'lucide-react';
 
 interface TeamWithProject extends Team {
   projectName: string;
@@ -43,7 +43,8 @@ export const TeamsPage: React.FC = () => {
 
   const getEligibleMembersForProject = (projectId: number | '') => {
     if (!projectId) return [];
-    return allUsers.filter((u) => u.role_code !== 'admin' && u.role_code !== 'project_manager');
+    const pool = projectMembers.length > 0 ? projectMembers : allUsers;
+    return pool.filter((u) => u.role_code !== 'admin' && u.role_code !== 'project_manager');
   };
 
   const loadData = async () => {
@@ -107,6 +108,7 @@ export const TeamsPage: React.FC = () => {
         setAllUsers(usersRes.data);
       }
     } catch (err: any) {
+      console.error('Failed to fetch team members', err);
       setMemberError('Failed to fetch team members');
     } finally {
       setIsMembersLoading(false);

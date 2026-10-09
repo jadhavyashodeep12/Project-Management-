@@ -193,8 +193,8 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
   };
 
 
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   useEffect(() => {
-
     loadData();
   }, [projectId]);
 
@@ -471,6 +471,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
                   <tr className="border-b border-white/[0.06] bg-white/[0.02] text-gray-400 font-semibold">
                     <th className="p-4">Name</th>
                     <th className="p-4">Email</th>
+                    {canManageProject && <th className="p-4 text-right">Actions</th>}
                   </tr>
                 </thead>
                 <tbody>
@@ -509,6 +510,20 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
 
                         </td>
                         <td className="p-4 text-gray-400">{member.email}</td>
+                        {canManageProject && (
+                          <td className="p-4 text-right">
+                            {!isOwner && (
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveMember(member.id)}
+                                className="p-2 rounded-xl text-red-400/80 hover:text-red-400 hover:bg-red-500/20 transition-all border-none bg-transparent cursor-pointer inline-flex items-center justify-center"
+                                title="Remove Member from Project"
+                              >
+                                <Trash2 className="w-4 h-4" />
+                              </button>
+                            )}
+                          </td>
+                        )}
                       </tr>
                     );
                   })}
