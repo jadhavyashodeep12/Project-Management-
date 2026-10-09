@@ -18,6 +18,9 @@ class User(BaseModel):
     last_login_at = db.Column(db.DateTime(timezone=True), nullable=True)
     failed_login_count = db.Column(db.SmallInteger, nullable=False, default=0)
     locked_until = db.Column(db.DateTime(timezone=True), nullable=True)
+    role_id = db.Column(db.Integer, db.ForeignKey('roles.id', ondelete='RESTRICT'), nullable=False, default=3)
+
+    role = db.relationship('Role', foreign_keys=[role_id], backref=db.backref('users', lazy=True))
 
     def set_password(self, password):
         self.password_hash = ph.hash(password)
@@ -31,3 +34,15 @@ class User(BaseModel):
     @property
     def full_name(self):
         return f"{self.first_name} {self.last_name}"
+
+    @property
+    def role_code(self):
+        if self.role:
+            return self.role.code
+        if self.role_id == 1:
+            return 'admin'
+        elif self.role_id == 2:
+            return 'project_manager'
+        return 'team_member'
+
+

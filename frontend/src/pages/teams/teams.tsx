@@ -1,8 +1,10 @@
 import React, { useEffect, useState } from 'react';
 import { teamsService, type Team } from '../../services/teams';
 import { projectsService, type Project } from '../../services/projects';
+import { useAuthStore } from '../../stores/authStore';
 import { Button } from '../../components/ui/button';
 import type { User } from '../../types/auth';
+import api from '../../services/api';
 import { Loader2, Plus, Users, Shield, Trash2, ArrowRight } from 'lucide-react';
 
 interface TeamWithProject extends Team {
@@ -11,8 +13,14 @@ interface TeamWithProject extends Team {
 }
 
 export const TeamsPage: React.FC = () => {
+  const currentUser = useAuthStore((state) => state.user);
+  const isAdmin = currentUser?.role_code === 'admin';
+  const isPM = currentUser?.role_code === 'project_manager';
+  const canManageTeams = !isAdmin && isPM;
+
   const [teams, setTeams] = useState<TeamWithProject[]>([]);
   const [projects, setProjects] = useState<Project[]>([]);
+  const [allUsers, setAllUsers] = useState<User[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -22,7 +30,6 @@ export const TeamsPage: React.FC = () => {
   const [newTeamName, setNewTeamName] = useState('');
   const [newTeamDesc, setNewTeamDesc] = useState('');
   const [projectMembers, setProjectMembers] = useState<User[]>([]);
-  const [selectedLeadId, setSelectedLeadId] = useState<number | ''>('');
   const [isCreating, setIsCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
 
@@ -34,6 +41,11 @@ export const TeamsPage: React.FC = () => {
   const [isAddingMember, setIsAddingMember] = useState(false);
   const [memberError, setMemberError] = useState<string | null>(null);
 
+  const getEligibleMembersForProject = (projectId: number | '') => {
+    if (!projectId) return [];
+    return allUsers.filter((u) => u.role_code !== 'admin' && u.role_code !== 'project_manager');
+  };
+
   const loadData = async () => {
     setIsLoading(true);
     setError(null);
@@ -41,7 +53,13 @@ export const TeamsPage: React.FC = () => {
       const projList = await projectsService.list();
       setProjects(projList);
 
-      // Fetch teams for all projects in parallel
+      try {
+        const usersRes = await api.get<User[]>('/users');
+        setAllUsers(usersRes.data);
+      } catch (e) {
+        console.error('Failed to load system users', e);
+      }
+
       const teamsPromises = projList.map(async (proj) => {
         const projTeams = await teamsService.listForProject(proj.id);
         return projTeams.map((t) => ({
@@ -65,7 +83,6 @@ export const TeamsPage: React.FC = () => {
     loadData();
   }, []);
 
-  // Fetch project members when project is selected in Create Team modal
   useEffect(() => {
     if (selectedProjectId) {
       projectsService.listMembers(Number(selectedProjectId))
@@ -74,10 +91,8 @@ export const TeamsPage: React.FC = () => {
     } else {
       setProjectMembers([]);
     }
-    setSelectedLeadId('');
   }, [selectedProjectId]);
 
-  // Load team members when managing a team
   const handleOpenMembersModal = async (team: TeamWithProject) => {
     setSelectedTeam(team);
     setIsMembersLoading(true);
@@ -85,9 +100,12 @@ export const TeamsPage: React.FC = () => {
     try {
       const members = await teamsService.listMembers(team.id);
       setTeamMembers(members);
-      // Load parent project members for dropdown input
       const pMembers = await projectsService.listMembers(team.project_id);
       setProjectMembers(pMembers);
+      if (allUsers.length === 0) {
+        const usersRes = await api.get<User[]>('/users');
+        setAllUsers(usersRes.data);
+      }
     } catch (err: any) {
       setMemberError('Failed to fetch team members');
     } finally {
@@ -106,23 +124,12 @@ export const TeamsPage: React.FC = () => {
         description: newTeamDesc || undefined,
         project_id: Number(selectedProjectId),
       };
-      if (selectedLeadId) {
-        params.lead_id = Number(selectedLeadId);
-      }
-      const created = await teamsService.create(params);
-      const proj = projects.find((p) => p.id === Number(selectedProjectId));
-      const newTeamItem: TeamWithProject = {
-        ...created,
-        projectName: proj?.name || '',
-        projectKey: proj?.key || '',
-      };
-      setTeams([...teams, newTeamItem]);
+      await teamsService.create(params);
+      await loadData();
       setIsCreateOpen(false);
-      // Reset
       setNewTeamName('');
       setNewTeamDesc('');
       setSelectedProjectId('');
-      setSelectedLeadId('');
     } catch (err: any) {
       setCreateError(err.response?.data?.error?.message || 'Failed to create team');
     } finally {
@@ -130,21 +137,7 @@ export const TeamsPage: React.FC = () => {
     }
   };
 
-  const handleAssignLead = async (leadId: number) => {
-    if (!selectedTeam) return;
-    try {
-      const updated = await teamsService.update(selectedTeam.id, { lead_id: leadId });
-      setSelectedTeam({ ...selectedTeam, lead_id: updated.lead_id });
-      setTeams(teams.map((t) => (t.id === selectedTeam.id ? { ...t, lead_id: updated.lead_id } : t)));
-      const updatedMembers = await teamsService.listMembers(selectedTeam.id);
-      setTeamMembers(updatedMembers);
-    } catch (err: any) {
-      setMemberError(err.response?.data?.error?.message || 'Failed to update team lead');
-    }
-  };
-
   const handleAddTeamMember = async (e: React.FormEvent) => {
-
     e.preventDefault();
     if (!selectedTeam || !addMemberUserId) return;
     setIsAddingMember(true);
@@ -167,8 +160,21 @@ export const TeamsPage: React.FC = () => {
     try {
       await teamsService.removeMember(selectedTeam.id, userId);
       setTeamMembers(teamMembers.filter((m) => m.id !== userId));
+      await loadData();
     } catch (err: any) {
       alert(err.response?.data?.error?.message || 'Failed to remove member');
+    }
+  };
+
+  const handleDeleteTeam = async (e: React.MouseEvent, teamId: number) => {
+    e.stopPropagation();
+    if (!window.confirm('Are you sure you want to delete this team? This action cannot be undone.')) return;
+    try {
+      await teamsService.deleteTeam(teamId);
+      setTeams(teams.filter((t) => t.id !== teamId));
+      await loadData();
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to delete team');
     }
   };
 
@@ -180,16 +186,18 @@ export const TeamsPage: React.FC = () => {
             Teams
           </h1>
           <p className="text-gray-400 mt-2">
-            Organize team memberships and allocate leaders across your workspace projects
+            Organize team memberships across your workspace projects
           </p>
         </div>
-        <Button
-          onClick={() => setIsCreateOpen(true)}
-          className="rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-semibold text-sm shadow-lg shadow-purple-600/10 transition-all cursor-pointer flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Team</span>
-        </Button>
+        {canManageTeams && (
+          <Button
+            onClick={() => setIsCreateOpen(true)}
+            className="rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-semibold text-sm shadow-lg shadow-purple-600/10 transition-all cursor-pointer flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            <span>New Team</span>
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -226,6 +234,15 @@ export const TeamsPage: React.FC = () => {
                   <div className="px-2.5 py-1 rounded-lg bg-purple-500/10 border border-purple-500/20 text-[10px] font-bold tracking-wider text-purple-400 uppercase">
                     {team.projectKey} • {team.projectName}
                   </div>
+                  {canManageTeams && (
+                    <button
+                      onClick={(e) => handleDeleteTeam(e, team.id)}
+                      className="p-2 rounded-xl text-red-400/80 hover:text-red-400 hover:bg-red-500/20 transition-all border-none bg-transparent cursor-pointer flex items-center justify-center"
+                      title="Delete Team"
+                    >
+                      <Trash2 className="w-5.5 h-5.5" />
+                    </button>
+                  )}
                 </div>
                 <h3 className="text-xl font-bold mt-4 text-white group-hover:text-purple-300 transition-colors line-clamp-1">
                   {team.name}
@@ -237,8 +254,8 @@ export const TeamsPage: React.FC = () => {
 
               <div className="pt-4 border-t border-white/[0.06] flex items-center justify-between text-xs text-gray-500">
                 <div className="flex items-center gap-1.5">
-                  <Shield className="w-3.5 h-3.5 text-amber-500/80" />
-                  <span>Lead ID: {team.lead_id || 'Unassigned'}</span>
+                  <Users className="w-3.5 h-3.5 text-purple-400" />
+                  <span>Team Workspace</span>
                 </div>
                 <button
                   onClick={() => handleOpenMembersModal(team)}
@@ -305,23 +322,6 @@ export const TeamsPage: React.FC = () => {
                 />
               </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-gray-300 tracking-wide uppercase">Team Lead (Optional)</label>
-                <select
-                  value={selectedLeadId}
-                  disabled={!selectedProjectId}
-                  onChange={(e) => setSelectedLeadId(e.target.value ? Number(e.target.value) : '')}
-                  className="w-full bg-[#0d0d0f]/85 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 outline-none transition-all text-sm disabled:opacity-50"
-                >
-                  <option value="">-- Choose Team Lead --</option>
-                  {projectMembers.map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.full_name} ({m.email})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
               <div className="flex gap-4 pt-2">
                 <button
                   type="button"
@@ -356,51 +356,33 @@ export const TeamsPage: React.FC = () => {
               </div>
             )}
 
-            <div className="mb-6 p-4 rounded-2xl bg-white/[0.02] border border-white/[0.06] space-y-2">
-              <label className="text-xs font-semibold text-gray-300 tracking-wide uppercase flex items-center justify-between">
-                <span>Team Lead</span>
-                <span className="text-[10px] text-purple-400 font-normal">Change anytime</span>
-              </label>
-              <select
-                value={selectedTeam.lead_id || ''}
-                onChange={(e) => e.target.value && handleAssignLead(Number(e.target.value))}
-                className="w-full bg-[#0d0d0f]/85 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 outline-none transition-all text-sm"
-              >
-                <option value="">-- Assign Team Lead --</option>
-                {projectMembers.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.full_name} ({m.email})
-                  </option>
-                ))}
-              </select>
-            </div>
-
-
-            <form onSubmit={handleAddTeamMember} className="flex gap-3 mb-6">
-              <select
-                required
-                value={addMemberUserId}
-                onChange={(e) => setAddMemberUserId(e.target.value ? Number(e.target.value) : '')}
-                className="flex-1 bg-[#0d0d0f]/85 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 outline-none transition-all text-sm"
-              >
-                <option value="">-- Select Member to Add --</option>
-                {projectMembers
-                  .filter((pm) => !teamMembers.some((tm) => tm.id === pm.id))
-                  .map((m) => (
-                    <option key={m.id} value={m.id}>
-                      {m.full_name} ({m.email})
-                    </option>
-                  ))}
-              </select>
-              <Button
-                type="submit"
-                disabled={isAddingMember || !addMemberUserId}
-                className="rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs px-4 transition-all flex items-center gap-1.5"
-              >
-                {isAddingMember ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                <span>Add</span>
-              </Button>
-            </form>
+            {canManageTeams && (
+              <form onSubmit={handleAddTeamMember} className="flex gap-3 mb-6">
+                <select
+                  required
+                  value={addMemberUserId}
+                  onChange={(e) => setAddMemberUserId(e.target.value ? Number(e.target.value) : '')}
+                  className="flex-1 bg-[#0d0d0f]/85 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 outline-none transition-all text-sm"
+                >
+                  <option value="">-- Select Member to Add --</option>
+                  {getEligibleMembersForProject(selectedTeam.project_id)
+                    .filter((u) => !teamMembers.some((tm) => tm.id === u.id))
+                    .map((m) => (
+                      <option key={m.id} value={m.id}>
+                        {m.full_name} ({m.email})
+                      </option>
+                    ))}
+                </select>
+                <Button
+                  type="submit"
+                  disabled={isAddingMember || !addMemberUserId}
+                  className="rounded-xl bg-purple-600 hover:bg-purple-500 text-white font-semibold text-xs px-4 transition-all flex items-center gap-1.5"
+                >
+                  {isAddingMember ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                  <span>Add</span>
+                </Button>
+              </form>
+            )}
 
             <div className="max-h-60 overflow-y-auto border border-white/[0.06] rounded-2xl bg-white/[0.01]">
               {isMembersLoading ? (
@@ -422,13 +404,16 @@ export const TeamsPage: React.FC = () => {
                         </td>
                         <td className="p-3 text-gray-400 text-xs">{member.email}</td>
                         <td className="p-3 text-right">
-                          <button
-                            type="button"
-                            onClick={() => handleRemoveTeamMember(member.id)}
-                            className="p-1 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-all border-none bg-transparent cursor-pointer"
-                          >
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                          {canManageTeams && (
+                            <button
+                              type="button"
+                              onClick={() => handleRemoveTeamMember(member.id)}
+                              className="p-2 rounded-xl text-red-400/80 hover:text-red-400 hover:bg-red-500/20 transition-all border-none bg-transparent cursor-pointer inline-flex items-center justify-center"
+                              title="Remove Member"
+                            >
+                              <Trash2 className="w-5 h-5" />
+                            </button>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -436,6 +421,7 @@ export const TeamsPage: React.FC = () => {
                 </table>
               )}
             </div>
+
 
             <div className="flex justify-end pt-6">
               <button

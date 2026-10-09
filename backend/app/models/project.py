@@ -18,10 +18,13 @@ class Project(BaseModel):
     name = db.Column(db.String(150), nullable=False)
     description = db.Column(db.Text, nullable=True)
     owner_id = db.Column(db.BigInteger, db.ForeignKey('users.id', ondelete='RESTRICT'), nullable=False)
+    manager_id = db.Column(db.BigInteger, db.ForeignKey('users.id', ondelete='SET NULL'), nullable=True)
     status = db.Column(db.String(50), nullable=False, default='active')  # 'active', 'archived'
     start_date = db.Column(db.Date, nullable=True)
     end_date = db.Column(db.Date, nullable=True)
 
     # Relationships
     owner = db.relationship('User', foreign_keys=[owner_id], backref=db.backref('owned_projects', lazy=True))
+    manager = db.relationship('User', foreign_keys=[manager_id], backref=db.backref('managed_projects', lazy=True))
     members = db.relationship('User', secondary=project_members, backref=db.backref('projects', lazy=True))
+

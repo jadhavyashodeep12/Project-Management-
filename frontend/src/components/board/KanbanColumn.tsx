@@ -14,6 +14,7 @@ interface KanbanColumnProps {
   ownerId: number;
   teamLeads: number[];
   onStatusChange: (taskId: number, newStatus: string) => void;
+  onDeleteTask?: (taskId: number) => void;
 }
 
 export const KanbanColumn: React.FC<KanbanColumnProps> = ({
@@ -25,6 +26,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   ownerId,
   teamLeads,
   onStatusChange,
+  onDeleteTask,
 }) => {
   const { setNodeRef, isOver } = useDroppable({ id });
 
@@ -33,9 +35,8 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
   return (
     <div
       ref={setNodeRef}
-      className={`border border-white/[0.06] border-t-4 ${color} ${
-        isOver ? 'ring-2 ring-purple-500/50 bg-purple-500/5' : ''
-      } p-4 rounded-2xl flex flex-col justify-between min-h-[450px] transition-all`}
+      className={`border border-white/[0.06] border-t-4 ${color} ${isOver ? 'ring-2 ring-purple-500/50 bg-purple-500/5' : ''
+        } p-4 rounded-2xl flex flex-col justify-between min-h-[450px] transition-all`}
     >
       <div className="space-y-3 flex-1 flex flex-col">
         {/* Column Header */}
@@ -62,6 +63,7 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
                   ownerId={ownerId}
                   teamLeads={teamLeads}
                   onStatusChange={onStatusChange}
+                  onDeleteTask={onDeleteTask}
                 />
               ))
             )}
@@ -71,3 +73,4 @@ export const KanbanColumn: React.FC<KanbanColumnProps> = ({
     </div>
   );
 };
+

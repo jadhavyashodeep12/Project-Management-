@@ -3,7 +3,7 @@ import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
 import type { Task } from '../../services/tasks';
 import type { User } from '../../types/auth';
-import { GripVertical } from 'lucide-react';
+import { GripVertical, Trash2 } from 'lucide-react';
 
 interface KanbanCardProps {
   task: Task;
@@ -11,6 +11,7 @@ interface KanbanCardProps {
   ownerId: number;
   teamLeads: number[];
   onStatusChange: (taskId: number, newStatus: string) => void;
+  onDeleteTask?: (taskId: number) => void;
 }
 
 export const KanbanCard: React.FC<KanbanCardProps> = ({
@@ -19,6 +20,7 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
   ownerId,
   teamLeads,
   onStatusChange,
+  onDeleteTask,
 }) => {
   const {
     attributes,
@@ -35,50 +37,66 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
     opacity: isDragging ? 0.4 : 1,
   };
 
-  const isOwner = currentUser?.id === ownerId;
-  const isTeamLead = teamLeads.includes(currentUser?.id || -1);
-  const isAssignee = task.assignee_id === currentUser?.id;
-  const isCreator = task.creator_id === currentUser?.id;
-  const canEditStatus = isOwner || isTeamLead || isAssignee || isCreator;
+  const isAdmin = currentUser?.role_code === 'admin';
+  const isOwner = currentUser?.id === ownerId && !isAdmin;
+  const isTeamLead = (teamLeads.includes(currentUser?.id || -1) || currentUser?.role_code === 'project_manager') && !isAdmin;
+  const isAssignee = task.assignee_id === currentUser?.id && !isAdmin;
+  const isCreator = task.creator_id === currentUser?.id && !isAdmin;
+  const canEditStatus = !isAdmin && (isOwner || isTeamLead || isAssignee || isCreator);
+  const canDelete = !isAdmin && (isOwner || isTeamLead || isCreator);
 
   return (
     <div
       ref={setNodeRef}
       style={style}
-      className={`bg-[#121214]/80 border ${
-        isDragging ? 'border-purple-500 shadow-xl shadow-purple-500/20' : 'border-white/[0.08] hover:border-purple-500/40'
-      } p-4 rounded-xl space-y-3 transition-all group relative cursor-default`}
+      className={`bg-[#121214]/80 border ${isDragging ? 'border-purple-500 shadow-xl shadow-purple-500/20' : 'border-white/[0.08] hover:border-purple-500/40'
+        } p-4 rounded-xl space-y-3 transition-all group relative cursor-default`}
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           {/* Drag Handle */}
-          <div
-            {...attributes}
-            {...listeners}
-            className="cursor-grab active:cursor-grabbing p-1 -ml-1 text-gray-600 hover:text-purple-400 rounded transition-colors"
-            title="Drag task"
-          >
-            <GripVertical className="w-3.5 h-3.5" />
-          </div>
+          {!isAdmin && (
+            <div
+              {...attributes}
+              {...listeners}
+              className="cursor-grab active:cursor-grabbing p-1 -ml-1 text-gray-600 hover:text-purple-400 rounded transition-colors"
+              title="Drag task"
+            >
+              <GripVertical className="w-3.5 h-3.5" />
+            </div>
+          )}
           <span className="text-[10px] font-bold text-purple-400 uppercase tracking-wider bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">
             {task.key}
           </span>
         </div>
 
-        {/* Priority Badge */}
-        <span
-          className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${
-            task.priority === 'urgent'
-              ? 'bg-red-500/20 text-red-400 border border-red-500/30'
-              : task.priority === 'high'
-              ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
-              : task.priority === 'medium'
-              ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
-              : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
-          }`}
-        >
-          {task.priority}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {/* Priority Badge */}
+          <span
+            className={`text-[9px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-md ${task.priority === 'urgent'
+                ? 'bg-red-500/20 text-red-400 border border-red-500/30'
+                : task.priority === 'high'
+                  ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30'
+                  : task.priority === 'medium'
+                    ? 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                    : 'bg-gray-500/20 text-gray-400 border border-gray-500/30'
+              }`}
+          >
+            {task.priority}
+          </span>
+          {canDelete && onDeleteTask && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteTask(task.id);
+              }}
+              className="p-1.5 rounded-lg text-red-400/80 hover:text-red-400 hover:bg-red-500/20 transition-all border-none bg-transparent cursor-pointer flex items-center justify-center ml-1"
+              title="Delete Task"
+            >
+              <Trash2 className="w-4.5 h-4.5" />
+            </button>
+          )}
+        </div>
       </div>
 
       <h5 className="font-semibold text-sm text-white group-hover:text-purple-300 transition-colors line-clamp-2">
@@ -121,3 +139,4 @@ export const KanbanCard: React.FC<KanbanCardProps> = ({
     </div>
   );
 };
+

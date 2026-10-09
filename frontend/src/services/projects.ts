@@ -7,6 +7,7 @@ export interface Project {
   name: string;
   description: string | null;
   owner_id: number;
+  manager_id?: number | null;
   status: 'active' | 'archived';
   start_date: string | null;
   end_date: string | null;
@@ -18,6 +19,7 @@ export interface ProjectCreateParams {
   key: string;
   name: string;
   description?: string;
+  manager_id?: number | null;
   start_date?: string;
   end_date?: string;
 }
@@ -25,6 +27,7 @@ export interface ProjectCreateParams {
 export interface ProjectUpdateParams {
   name?: string;
   description?: string;
+  manager_id?: number | null;
   status?: 'active' | 'archived';
   start_date?: string;
   end_date?: string;
@@ -51,6 +54,15 @@ export const projectsService = {
     return response.data;
   },
 
+  assignManager: async (projectId: number, managerId: number | null): Promise<Project> => {
+    const response = await api.put<Project>(`/projects/${projectId}/manager`, { manager_id: managerId });
+    return response.data;
+  },
+
+  delete: async (projectId: number): Promise<void> => {
+    await api.delete(`/projects/${projectId}`);
+  },
+
   listMembers: async (projectId: number): Promise<User[]> => {
     const response = await api.get<User[]>(`/projects/${projectId}/members`);
     return response.data;
@@ -68,3 +80,4 @@ export const projectsService = {
     await api.delete(`/projects/${projectId}/members/${userId}`);
   },
 };
+

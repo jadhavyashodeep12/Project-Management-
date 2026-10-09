@@ -1,13 +1,19 @@
 import React, { useEffect, useState } from 'react';
 import { projectsService, type Project } from '../../services/projects';
+import { useAuthStore } from '../../stores/authStore';
 import { Button } from '../../components/ui/button';
-import { Loader2, Plus, Calendar, Folder, ArrowRight } from 'lucide-react';
+import { Loader2, Plus, Calendar, Folder, ArrowRight, Trash2 } from 'lucide-react';
+import api from '../../services/api';
+import type { User } from '../../types/auth';
 
 interface ProjectListProps {
   onSelectProject: (projectId: number) => void;
 }
 
 export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => {
+  const user = useAuthStore((state) => state.user);
+  const isAdmin = user?.role_code === 'admin';
+
   const [projects, setProjects] = useState<Project[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -17,6 +23,8 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectKey, setNewProjectKey] = useState('');
   const [newProjectDesc, setNewProjectDesc] = useState('');
+  const [selectedManagerId, setSelectedManagerId] = useState<string>('');
+  const [managers, setManagers] = useState<User[]>([]);
   const [isCreating, setIsCreating] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
 
@@ -33,12 +41,38 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     }
   };
 
+  const fetchManagers = async () => {
+    try {
+      const res = await api.get<User[]>('/users');
+      const pmUsers = res.data.filter((u) => u.role_code === 'project_manager');
+      setManagers(pmUsers.length > 0 ? pmUsers : res.data);
+    } catch (err) {
+      console.error('Failed to fetch managers list', err);
+    }
+  };
+
   useEffect(() => {
     fetchProjects();
-  }, []);
+    if (isAdmin) {
+      fetchManagers();
+    }
+  }, [isAdmin]);
+
+  const handleDelete = async (e: React.MouseEvent, projectId: number) => {
+    e.stopPropagation();
+    if (!isAdmin) return;
+    if (!window.confirm('Are you sure you want to delete this project? This action cannot be undone.')) return;
+    try {
+      await projectsService.delete(projectId);
+      setProjects(projects.filter((p) => p.id !== projectId));
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to delete project');
+    }
+  };
 
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (!isAdmin) return;
     setIsCreating(true);
     setFormError(null);
     try {
@@ -46,13 +80,14 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
         name: newProjectName,
         key: newProjectKey,
         description: newProjectDesc || undefined,
+        manager_id: selectedManagerId ? parseInt(selectedManagerId, 10) : undefined,
       });
       setProjects([created, ...projects]);
       setIsModalOpen(false);
-      // Reset form
       setNewProjectName('');
       setNewProjectKey('');
       setNewProjectDesc('');
+      setSelectedManagerId('');
     } catch (err: any) {
       setFormError(err.response?.data?.error?.message || 'Failed to create project. Please verify inputs.');
     } finally {
@@ -60,10 +95,8 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     }
   };
 
-  // Helper to generate key automatically from name
   const handleNameChange = (name: string) => {
     setNewProjectName(name);
-    // Auto-generate key: take uppercase initials up to 5 chars
     const cleaned = name
       .replace(/[^a-zA-Z0-9 ]/g, '')
       .split(' ')
@@ -89,13 +122,15 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
             Manage your workspace projects, boards, and members
           </p>
         </div>
-        <Button
-          onClick={() => setIsModalOpen(true)}
-          className="rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-semibold text-sm shadow-lg shadow-purple-600/10 transition-all cursor-pointer flex items-center gap-2"
-        >
-          <Plus className="w-4 h-4" />
-          <span>New Project</span>
-        </Button>
+        {isAdmin && (
+          <Button
+            onClick={() => setIsModalOpen(true)}
+            className="rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-semibold text-sm shadow-lg shadow-purple-600/10 transition-all cursor-pointer flex items-center gap-2"
+          >
+            <Plus className="w-4 h-4" />
+            <span>Create Project</span>
+          </Button>
+        )}
       </div>
 
       {isLoading ? (
@@ -117,8 +152,19 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
           </div>
           <h3 className="text-lg font-bold text-white">No projects found</h3>
           <p className="text-sm text-gray-400 mt-1 max-w-sm mx-auto">
-            You don't have access to any projects. Click the "New Project" button to get started!
+            {isAdmin
+              ? 'You do not have any projects created yet. Click "Create Project" above to create one!'
+              : 'You do not have access to any projects currently.'}
           </p>
+          {isAdmin && (
+            <Button
+              onClick={() => setIsModalOpen(true)}
+              className="mt-6 rounded-xl bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white font-semibold text-sm shadow-lg transition-all cursor-pointer flex items-center gap-2"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Create Project</span>
+            </Button>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -128,17 +174,27 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
               onClick={() => onSelectProject(project.id)}
               className="group bg-[#121214]/65 hover:bg-[#161619]/80 border border-white/[0.08] hover:border-purple-500/40 p-6 rounded-3xl transition-all shadow-xl hover:shadow-2xl hover:shadow-purple-500/5 cursor-pointer relative overflow-hidden flex flex-col justify-between h-[200px]"
             >
-              {/* Decorative glows */}
               <div className="absolute -top-10 -right-10 w-24 h-24 rounded-full bg-purple-500/5 group-hover:bg-purple-500/10 blur-xl transition-all" />
-              
+
               <div>
                 <div className="flex items-start justify-between">
                   <div className="px-2.5 py-1 rounded-lg bg-white/[0.04] border border-white/[0.06] text-xs font-bold tracking-wider text-purple-400 uppercase">
                     {project.key}
                   </div>
-                  <span className="text-xs text-gray-500 font-medium capitalize">
-                    {project.status}
-                  </span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs text-gray-500 font-medium capitalize">
+                      {project.status}
+                    </span>
+                    {isAdmin && (
+                      <button
+                        onClick={(e) => handleDelete(e, project.id)}
+                        className="p-2 rounded-xl text-red-400/80 hover:text-red-400 hover:bg-red-500/20 transition-all border-none bg-transparent cursor-pointer flex items-center justify-center"
+                        title="Delete Project (Admin Only)"
+                      >
+                        <Trash2 className="w-5.5 h-5.5" />
+                      </button>
+                    )}
+                  </div>
                 </div>
                 <h3 className="text-xl font-bold mt-4 text-white group-hover:text-purple-300 transition-colors line-clamp-1">
                   {project.name}
@@ -164,50 +220,66 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
       )}
 
       {/* Creation Modal */}
-      {isModalOpen && (
+      {isModalOpen && isAdmin && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/75 backdrop-blur-sm p-4">
           <div className="bg-[#121214] border border-white/[0.08] w-full max-w-md rounded-3xl p-8 shadow-2xl relative">
             <h3 className="text-2xl font-bold tracking-tight text-white mb-6">Create New Project</h3>
-            
-            <form onSubmit={handleCreate} className="space-y-6">
+
+            <form onSubmit={handleCreate} className="space-y-5">
               {formError && (
                 <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 text-xs font-medium rounded-xl">
                   {formError}
                 </div>
               )}
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-gray-300 tracking-wide uppercase">Project Name</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. NextGen Platform"
+                  placeholder="e.g. Alpha Mobile App"
                   value={newProjectName}
                   onChange={(e) => handleNameChange(e.target.value)}
                   className="w-full bg-[#0d0d0f]/80 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/10 outline-none transition-all placeholder:text-gray-600 text-sm"
                 />
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-gray-300 tracking-wide uppercase">Project Key</label>
                 <input
                   type="text"
                   required
-                  placeholder="e.g. NGP"
+                  placeholder="e.g. ALPHA"
                   value={newProjectKey}
                   onChange={(e) => setNewProjectKey(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, ''))}
                   className="w-full bg-[#0d0d0f]/80 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/10 outline-none transition-all placeholder:text-gray-600 text-sm"
                 />
-                <p className="text-[10px] text-gray-500 font-medium">Used as the prefix for all task IDs (e.g. NGP-101). Keep it short (2-5 letters).</p>
+                <p className="text-[10px] text-gray-500 font-medium">Prefix for task IDs (e.g. ALPHA-1). 2 to 5 characters.</p>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-1.5">
+                <label className="text-xs font-semibold text-gray-300 tracking-wide uppercase">Assign Project Manager</label>
+                <select
+                  value={selectedManagerId}
+                  onChange={(e) => setSelectedManagerId(e.target.value)}
+                  className="w-full bg-[#0d0d0f]/80 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/10 outline-none transition-all text-sm"
+                >
+                  <option value="">-- Select Project Manager (Optional) --</option>
+                  {managers.map((mgr) => (
+                    <option key={mgr.id} value={mgr.id}>
+                      {mgr.full_name} ({mgr.email})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="space-y-1.5">
                 <label className="text-xs font-semibold text-gray-300 tracking-wide uppercase">Description</label>
                 <textarea
                   placeholder="Briefly describe the project goals..."
                   value={newProjectDesc}
                   onChange={(e) => setNewProjectDesc(e.target.value)}
-                  className="w-full bg-[#0d0d0f]/80 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/10 outline-none transition-all placeholder:text-gray-600 text-sm h-24 resize-none"
+                  className="w-full bg-[#0d0d0f]/80 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 focus:ring-2 focus:ring-purple-500/10 outline-none transition-all placeholder:text-gray-600 text-sm h-20 resize-none"
                 />
               </div>
 
@@ -244,3 +316,4 @@ export const ProjectList: React.FC<ProjectListProps> = ({ onSelectProject }) => 
     </div>
   );
 };
+

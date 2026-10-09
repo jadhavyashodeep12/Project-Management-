@@ -15,26 +15,52 @@ class ProjectRepository:
         return Project.query_active().filter_by(key=key.upper()).first()
 
     @staticmethod
-    def list_for_user(user_id: int) -> list[Project]:
-        # Returns projects where the user is either the owner OR a member
-        return Project.query_active().filter(
-            (Project.owner_id == user_id) |
-            (Project.members.any(id=user_id))
-        ).all()
+    def list_all() -> list[Project]:
+        return Project.query_active().order_by(Project.created_at.desc()).all()
 
     @staticmethod
-    def create(key: str, name: str, description: str, owner_id: int, start_date=None, end_date=None) -> Project:
+    def list_for_user(user_id: int) -> list[Project]:
+        # Returns projects where the user is owner, manager, or a member
+        return Project.query_active().filter(
+            (Project.owner_id == user_id) |
+            (Project.manager_id == user_id) |
+            (Project.members.any(id=user_id))
+        ).order_by(Project.created_at.desc()).all()
+
+    @staticmethod
+    def create(key: str, name: str, description: str, owner_id: int, manager_id: int = None, start_date=None, end_date=None) -> Project:
         project = Project(
             key=key.strip().upper(),
             name=name.strip(),
             description=description.strip() if description else None,
             owner_id=owner_id,
+            manager_id=manager_id,
             start_date=start_date,
             end_date=end_date
         )
         db.session.add(project)
         db.session.commit()
         return project
+
+    @staticmethod
+    def delete(project: Project) -> None:
+        from datetime import datetime, timezone
+        from app.models.team import Team, team_members
+        now = datetime.now(timezone.utc)
+        project.deleted_at = now
+
+        # Soft-delete teams and clear team_members for this project
+        teams = Team.query.filter_by(project_id=project.id).all()
+        for t in teams:
+            t.deleted_at = now
+            db.session.execute(team_members.delete().where(team_members.c.team_id == t.id))
+
+        # Clear project_members entries for this project
+        db.session.execute(project_members.delete().where(project_members.c.project_id == project.id))
+
+        db.session.add(project)
+        db.session.commit()
+
 
     @staticmethod
     def add_member(project_id: int, user_id: int, role_id: int) -> None:
@@ -73,33 +99,46 @@ class ProjectRepository:
 
     @staticmethod
     def list_members_with_roles(project_id: int) -> list[dict]:
-        stmt = (
-            db.select(
-                User.id,
-                User.email,
-                User.first_name,
-                User.last_name,
-                Role.id.label("role_id"),
-                Role.name.label("role_name"),
-                Role.code.label("role_code")
-            )
-            .select_from(project_members)
-            .join(User, User.id == project_members.c.user_id)
-            .outerjoin(Role, Role.id == project_members.c.role_id)
-            .where(project_members.c.project_id == project_id)
+        project = ProjectRepository.get_by_id(project_id)
+        if not project:
+            return []
+
+        user_ids = set()
+        if project.owner_id:
+            user_ids.add(project.owner_id)
+        if project.manager_id:
+            user_ids.add(project.manager_id)
+
+        # Users from project_members table
+        pm_stmt = db.select(project_members.c.user_id).where(project_members.c.project_id == project_id)
+        for uid in db.session.execute(pm_stmt).scalars().all():
+            user_ids.add(uid)
+
+        # Users from team_members table belonging to this project's active teams
+        from app.models.team import Team, team_members
+        tm_stmt = (
+            db.select(team_members.c.user_id)
+            .join(Team, Team.id == team_members.c.team_id)
+            .where(and_(Team.project_id == project_id, Team.deleted_at.is_(None)))
         )
-        results = db.session.execute(stmt).all()
+        for uid in db.session.execute(tm_stmt).scalars().all():
+            user_ids.add(uid)
+
+        if not user_ids:
+            return []
+
+        users = User.query.filter(User.id.in_(user_ids)).all()
         return [
             {
-                "id": r.id,
-                "email": r.email,
-                "first_name": r.first_name,
-                "last_name": r.last_name,
-                "full_name": f"{r.first_name} {r.last_name}",
-                "role_id": r.role_id,
-                "role_name": r.role_name,
-                "role_code": r.role_code
+                "id": u.id,
+                "email": u.email,
+                "first_name": u.first_name,
+                "last_name": u.last_name,
+                "full_name": f"{u.first_name} {u.last_name}",
+                "role_id": u.role_id,
+                "role_name": u.role.name if u.role else None,
+                "role_code": u.role_code
             }
-            for r in results
+            for u in users
         ]
 

@@ -35,6 +35,9 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
   const [newTaskDesc, setNewTaskDesc] = useState('');
   const [newTaskPriority, setNewTaskPriority] = useState<'low' | 'medium' | 'high' | 'urgent'>('medium');
   const [newTaskType, setNewTaskType] = useState<'task' | 'bug' | 'story' | 'epic'>('task');
+  const [newTaskTeamId, setNewTaskTeamId] = useState<number | ''>('');
+  const [taskTeamMembers, setTaskTeamMembers] = useState<User[]>([]);
+  const [isLoadingTaskTeamMembers, setIsLoadingTaskTeamMembers] = useState(false);
   const [newTaskAssigneeId, setNewTaskAssigneeId] = useState<number | ''>('');
   const [isCreatingTask, setIsCreatingTask] = useState(false);
   const [taskError, setTaskError] = useState<string | null>(null);
@@ -111,26 +114,48 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
     }
   };
 
+  useEffect(() => {
+    if (newTaskTeamId) {
+      setIsLoadingTaskTeamMembers(true);
+      teamsService.listMembers(Number(newTaskTeamId))
+        .then((mList) => {
+          setTaskTeamMembers(mList.filter((u) => u.role_code !== 'admin' && u.role_code !== 'project_manager'));
+        })
+        .catch((err) => {
+          console.error('Failed to load team members for task assignment', err);
+          setTaskTeamMembers([]);
+        })
+        .finally(() => {
+          setIsLoadingTaskTeamMembers(false);
+        });
+    } else {
+      setTaskTeamMembers([]);
+    }
+  }, [newTaskTeamId]);
+
   const handleCreateTask = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTaskTitle.trim()) return;
     setIsCreatingTask(true);
     setTaskError(null);
     try {
-      const created = await tasksService.create(projectId, {
+      await tasksService.create(projectId, {
         title: newTaskTitle,
         description: newTaskDesc || undefined,
         priority: newTaskPriority,
         type: newTaskType,
         assignee_id: newTaskAssigneeId ? Number(newTaskAssigneeId) : undefined,
       });
-      setTasks([created, ...tasks]);
+      const updatedTasks = await tasksService.listForProject(projectId);
+      setTasks(updatedTasks);
       setIsCreateTaskOpen(false);
       setNewTaskTitle('');
       setNewTaskDesc('');
       setNewTaskPriority('medium');
       setNewTaskType('task');
       setNewTaskAssigneeId('');
+      setNewTaskTeamId('');
+      setTaskTeamMembers([]);
     } catch (err: any) {
       setTaskError(err.response?.data?.error?.message || 'Failed to create task');
     } finally {
@@ -144,6 +169,16 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
       setTasks(tasks.map((t) => (t.id === taskId ? updated : t)));
     } catch (err: any) {
       alert(err.response?.data?.error?.message || 'Failed to update task status');
+    }
+  };
+
+  const handleDeleteTask = async (taskId: number) => {
+    if (!confirm('Are you sure you want to delete this task? This action cannot be undone.')) return;
+    try {
+      await tasksService.delete(taskId);
+      setTasks(tasks.filter((t) => t.id !== taskId));
+    } catch (err: any) {
+      alert(err.response?.data?.error?.message || 'Failed to delete task');
     }
   };
 
@@ -276,6 +311,11 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
     );
   }
 
+  const isAdmin = currentUser?.role_code === 'admin';
+  const isPM = currentUser?.role_code === 'project_manager' && (project?.manager_id === currentUser?.id || project?.owner_id === currentUser?.id);
+  const canManageProject = isAdmin || isPM;
+  const canCreateTask = !isAdmin && isPM;
+
   return (
     <div className="space-y-8 font-sans text-white">
       {/* Header */}
@@ -306,18 +346,20 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
 
       {/* Tabs */}
       <div className="border-b border-white/[0.06] flex gap-8">
-        {(['board', 'teams', 'members', 'settings'] as const).map((tab) => (
-          <button
-            key={tab}
-            onClick={() => setActiveTab(tab)}
-            className={`pb-4 text-sm font-semibold tracking-wide border-b-2 cursor-pointer transition-all uppercase ${activeTab === tab
+        {(['board', 'teams', 'members', 'settings'] as const)
+          .filter((tab) => tab !== 'settings' || canManageProject)
+          .map((tab) => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              className={`pb-4 text-sm font-semibold tracking-wide border-b-2 cursor-pointer transition-all uppercase ${activeTab === tab
                 ? 'border-purple-500 text-white'
                 : 'border-transparent text-gray-500 hover:text-gray-300'
-              }`}
-          >
-            {tab}
-          </button>
-        ))}
+                }`}
+            >
+              {tab}
+            </button>
+          ))}
       </div>
 
       {/* Tab Content */}
@@ -329,7 +371,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
                 <h3 className="text-lg font-bold text-white">Project Board</h3>
                 <p className="text-xs text-gray-400">Track and manage tasks across workflow columns.</p>
               </div>
-              {(project?.owner_id === currentUser?.id || teams.some((t) => t.lead_id === currentUser?.id)) && (
+              {canCreateTask && (
                 <Button
                   onClick={() => setIsCreateTaskOpen(true)}
                   className="rounded-xl bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-4 py-2 transition-all cursor-pointer flex items-center gap-1.5 shadow-lg shadow-purple-500/20"
@@ -338,7 +380,6 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
                   <span>Create Task</span>
                 </Button>
               )}
-
             </div>
 
             <KanbanBoard
@@ -348,27 +389,17 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
               ownerId={project?.owner_id || 0}
               teamLeads={teams.map((t) => t.lead_id).filter((id): id is number => id !== null)}
               onStatusChange={(taskId, newStatus) => handleTaskStatusChange(taskId, newStatus as any)}
+              onDeleteTask={handleDeleteTask}
             />
-
           </div>
-
         )}
-
 
         {activeTab === 'teams' && (
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold">Teams ({teams.length})</h3>
-              {project?.owner_id === currentUser?.id && (
-                <Button
-                  onClick={() => setIsCreateTeamOpen(true)}
-                  className="rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-white border border-white/[0.08] hover:border-purple-500/40 text-xs font-semibold px-4 py-2 transition-all cursor-pointer flex items-center gap-1.5"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Create Team</span>
-                </Button>
-              )}
             </div>
+
 
             {teams.length === 0 ? (
               <div className="bg-[#121214]/40 border border-white/[0.06] border-dashed rounded-2xl p-12 text-center">
@@ -382,13 +413,13 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
                     <div key={team.id} className="bg-[#121214]/60 border border-white/[0.06] p-6 rounded-2xl space-y-4">
                       <div className="flex items-center justify-between">
                         <h4 className="font-bold text-lg text-white">{team.name}</h4>
-                        {project?.owner_id === currentUser?.id && (
+                        {!isAdmin && isPM && (
                           <button
                             onClick={() => handleDeleteTeam(team.id)}
-                            className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-all border-none bg-transparent cursor-pointer"
+                            className="p-2 rounded-xl text-red-400/80 hover:text-red-400 hover:bg-red-500/20 transition-all border-none bg-transparent cursor-pointer flex items-center justify-center"
                             title="Delete team"
                           >
-                            <Trash2 className="w-4 h-4" />
+                            <Trash2 className="w-5.5 h-5.5" />
                           </button>
                         )}
                       </div>
@@ -422,7 +453,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
           <div className="space-y-6">
             <div className="flex items-center justify-between">
               <h3 className="text-lg font-bold">Project Members ({members.length})</h3>
-              {project?.owner_id === currentUser?.id && (
+              {!isAdmin && isPM && (
                 <Button
                   onClick={() => setIsAddMemberOpen(true)}
                   className="rounded-xl bg-white/[0.04] hover:bg-white/[0.08] text-white border border-white/[0.08] hover:border-purple-500/40 text-xs font-semibold px-4 py-2 transition-all cursor-pointer flex items-center gap-1.5"
@@ -440,7 +471,6 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
                   <tr className="border-b border-white/[0.06] bg-white/[0.02] text-gray-400 font-semibold">
                     <th className="p-4">Name</th>
                     <th className="p-4">Email</th>
-                    <th className="p-4">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -479,17 +509,6 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
 
                         </td>
                         <td className="p-4 text-gray-400">{member.email}</td>
-                        <td className="p-4">
-                          {!isOwner && (
-                            <button
-                              onClick={() => handleRemoveMember(member.id)}
-                              className="p-1.5 rounded-lg text-gray-500 hover:text-red-400 hover:bg-red-500/10 transition-all border-none bg-transparent cursor-pointer"
-                              title="Remove member"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          )}
-                        </td>
                       </tr>
                     );
                   })}
@@ -501,7 +520,7 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
         )}
 
 
-        {activeTab === 'settings' && (
+        {activeTab === 'settings' && canManageProject && (
           <form onSubmit={handleSaveSettings} className="bg-[#121214]/40 border border-white/[0.06] p-8 rounded-3xl max-w-xl space-y-6">
             <h3 className="text-lg font-bold mb-4">Project Settings</h3>
 
@@ -763,20 +782,55 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <label className="text-xs font-semibold text-gray-300 tracking-wide uppercase">Assignee (Optional)</label>
-                <select
-                  value={newTaskAssigneeId}
-                  onChange={(e) => setNewTaskAssigneeId(e.target.value ? Number(e.target.value) : '')}
-                  className="w-full bg-[#0d0d0f]/85 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 outline-none transition-all text-sm"
-                >
-                  <option value="">-- Unassigned --</option>
-                  {members.map((member) => (
-                    <option key={member.id} value={member.id}>
-                      {member.full_name} ({member.email})
-                    </option>
-                  ))}
-                </select>
+              <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-gray-300 tracking-wide uppercase">Team (Optional)</label>
+                  <select
+                    value={newTaskTeamId}
+                    onChange={(e) => {
+                      setNewTaskTeamId(e.target.value ? Number(e.target.value) : '');
+                      setNewTaskAssigneeId('');
+                    }}
+                    className="w-full bg-[#0d0d0f]/85 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 outline-none transition-all text-sm"
+                  >
+                    <option value="">-- All Teams --</option>
+                    {teams.map((t) => (
+                      <option key={t.id} value={t.id}>
+                        {t.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-semibold text-gray-300 tracking-wide uppercase">Assignee (Optional)</label>
+                  <select
+                    value={newTaskAssigneeId}
+                    onChange={(e) => setNewTaskAssigneeId(e.target.value ? Number(e.target.value) : '')}
+                    className="w-full bg-[#0d0d0f]/85 text-white px-4 py-2.5 rounded-xl border border-white/[0.08] focus:border-purple-500/50 outline-none transition-all text-sm"
+                  >
+                    <option value="">-- Unassigned --</option>
+                    {newTaskTeamId ? (
+                      isLoadingTaskTeamMembers ? (
+                        <option value="" disabled>Loading team members...</option>
+                      ) : taskTeamMembers.length === 0 ? (
+                        <option value="" disabled>No members in selected team</option>
+                      ) : (
+                        taskTeamMembers.map((m) => (
+                          <option key={m.id} value={m.id}>
+                            {m.full_name} ({m.email})
+                          </option>
+                        ))
+                      )
+                    ) : (
+                      members.filter((m) => m.role_code !== 'admin' && m.role_code !== 'project_manager').map((member) => (
+                        <option key={member.id} value={member.id}>
+                          {member.full_name} ({member.email})
+                        </option>
+                      ))
+                    )}
+                  </select>
+                </div>
               </div>
 
               <div className="flex gap-4 pt-2">
@@ -846,7 +900,6 @@ export const ProjectDetail: React.FC<ProjectDetailProps> = ({ projectId, onBack 
         </div>
       )}
     </div>
-
   );
 };
 

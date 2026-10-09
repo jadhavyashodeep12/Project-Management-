@@ -16,7 +16,7 @@ teams_bp = Blueprint("teams", "teams", url_prefix="/api/v1/teams", description="
 @require_auth
 @teams_bp.response(200, TeamResponseSchema(many=True))
 def list_project_teams(project_id):
-    return TeamService.list_teams_for_project(project_id)
+    return TeamService.list_teams_for_project(project_id, current_user_id=g.current_user.id)
 
 @teams_bp.route("", methods=["POST"])
 @require_auth
@@ -42,28 +42,14 @@ def get_team(team_id):
 @teams_bp.arguments(TeamUpdateRequestSchema)
 @teams_bp.response(200, TeamResponseSchema)
 def update_team(data, team_id):
-    team = TeamService.get_team(team_id)
-    
-    # Simple check: project owner or team lead can update team info
-    from app.repositories.project_repo import ProjectRepository
-    from app.utils.errors import AuthorizationException
-    project = ProjectRepository.get_by_id(team.project_id)
-    if g.current_user.id != project.owner_id:
-        raise AuthorizationException("Only the project owner can update team settings and change team lead")
+    return TeamService.update_team(
+        team_id=team_id,
+        name=data.get("name"),
+        description=data.get("description"),
+        lead_id=data.get("lead_id"),
+        current_user_id=g.current_user.id
+    )
 
-
-    for field in ["name", "description", "lead_id"]:
-        if field in data:
-            setattr(team, field, data[field])
-
-    # If lead changes, automatically add new lead to members
-    if "lead_id" in data and data["lead_id"]:
-        from app.repositories.team_repo import TeamRepository
-        TeamRepository.add_member(team_id, data["lead_id"])
-
-    from app.repositories.team_repo import TeamRepository
-    TeamRepository.save(team)
-    return team
 
 @teams_bp.route("/<int:team_id>/members", methods=["GET"])
 @require_auth

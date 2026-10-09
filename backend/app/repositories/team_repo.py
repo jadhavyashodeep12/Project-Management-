@@ -13,11 +13,18 @@ class TeamRepository:
 
     @staticmethod
     def list_for_user(user_id: int) -> list[Team]:
-        # Returns all teams where the user is either the lead OR a member
-        return Team.query_active().filter(
-            (Team.lead_id == user_id) |
-            (Team.members.any(id=user_id))
-        ).all()
+        # Returns all teams in active projects where the user is either the lead OR a member
+        from app.models.project import Project
+        return (
+            Team.query_active()
+            .join(Project, Project.id == Team.project_id)
+            .filter(Project.deleted_at.is_(None))
+            .filter(
+                (Team.lead_id == user_id) |
+                (Team.members.any(id=user_id))
+            )
+            .all()
+        )
 
     @staticmethod
     def create(name: str, description: str, project_id: int, lead_id: int = None) -> Team:
@@ -68,6 +75,8 @@ class TeamRepository:
     def delete(team: Team) -> None:
         from datetime import datetime, timezone
         team.deleted_at = datetime.now(timezone.utc)
+        delete_stmt = team_members.delete().where(team_members.c.team_id == team.id)
+        db.session.execute(delete_stmt)
         db.session.add(team)
         db.session.commit()
 

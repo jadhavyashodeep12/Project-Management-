@@ -1,6 +1,6 @@
 from flask import g
 from flask_smorest import Blueprint
-from app.middleware.auth import require_auth
+from app.middleware.auth import require_auth, require_project_access, require_project_manager_access
 from app.services.task_service import TaskService
 from app.schemas.task import (
     TaskResponseSchema,
@@ -12,6 +12,7 @@ tasks_bp = Blueprint("tasks", "tasks", url_prefix="/api/v1", description="Task o
 
 @tasks_bp.route("/projects/<int:project_id>/tasks", methods=["GET"])
 @require_auth
+@require_project_access()
 @tasks_bp.response(200, TaskResponseSchema(many=True))
 def list_project_tasks(project_id):
     return TaskService.list_tasks_for_project(project_id, g.current_user.id)
@@ -19,9 +20,11 @@ def list_project_tasks(project_id):
 
 @tasks_bp.route("/projects/<int:project_id>/tasks", methods=["POST"])
 @require_auth
+@require_project_manager_access()
 @tasks_bp.arguments(TaskCreateRequestSchema)
 @tasks_bp.response(201, TaskResponseSchema)
 def create_task(data, project_id):
+
     return TaskService.create_task(
         project_id=project_id,
         title=data["title"],

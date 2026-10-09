@@ -16,4 +16,7 @@ class UserResponseSchema(Schema):
     first_name = fields.Str()
     last_name = fields.Str()
     full_name = fields.Str()
+    role_id = fields.Int()
+    role_code = fields.Str()
     created_at = fields.DateTime()
+

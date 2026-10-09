@@ -22,6 +22,7 @@ interface KanbanBoardProps {
   ownerId: number;
   teamLeads: number[];
   onStatusChange: (taskId: number, newStatus: string) => void;
+  onDeleteTask?: (taskId: number) => void;
 }
 
 const COLUMNS = [
@@ -38,6 +39,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
   ownerId,
   teamLeads,
   onStatusChange,
+  onDeleteTask,
 }) => {
   // Filter States
   const [searchQuery, setSearchQuery] = useState('');
@@ -99,6 +101,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     const { active, over } = event;
     setActiveTask(null);
 
+    if (currentUser?.role_code === 'admin') return;
     if (!over) return;
 
     const activeTaskId = parseInt(active.id.toString(), 10);
@@ -164,6 +167,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
                 ownerId={ownerId}
                 teamLeads={teamLeads}
                 onStatusChange={onStatusChange}
+                onDeleteTask={onDeleteTask}
               />
             );
           })}
@@ -178,6 +182,7 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
               ownerId={ownerId}
               teamLeads={teamLeads}
               onStatusChange={onStatusChange}
+              onDeleteTask={onDeleteTask}
             />
           ) : null}
         </DragOverlay>
@@ -185,3 +190,4 @@ export const KanbanBoard: React.FC<KanbanBoardProps> = ({
     </div>
   );
 };
+
